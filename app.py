@@ -825,50 +825,14 @@ def get_input_schema():
         return jsonify({
             "input_data": [
                 {
-                    "id": "html_content",
-                    "type": "string",
-                    "name": "HTML Financial Statement",
-                    "data": {
-                        "placeholder": "Paste your bank or financial statement HTML",
-                        "maxLength": 52428800
-                    },
+                    "id": "html_file",
+                    "type": "file",
+                    "name": "Upload your Google Pay HTML export",
                     "validations": [
                         {
-                            "type": "required",
-                            "message": "HTML content is required"
-                        },
-                        {
-                            "type": "minLength",
-                            "value": 100,
-                            "message": "HTML must be at least 100 characters"
-                        },
-                        {
-                            "type": "maxLength",
-                            "value": 52428800,
-                            "message": "HTML cannot exceed 50MB"
+                            "type": "required"
                         }
                     ]
-                },
-                {
-                    "id": "analysis_type",
-                    "type": "option",
-                    "name": "Analysis Type",
-                    "data": {
-                        "options": [
-                            {
-                                "value": "spending_analysis",
-                                "label": "Spending Analysis"
-                            },
-                            {
-                                "value": "vendor_analysis",
-                                "label": "Vendor Analysis"
-                            },
-                            {
-                                "value": "budget_planning",
-                                "label": "Budget Planning"
-                            }
-                        ]
-                    }
                 }
             ]
         }), 200
