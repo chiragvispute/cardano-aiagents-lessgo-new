@@ -5,3 +5,5 @@ pymongo
 pandas
 python-dotenv
 flask
+gunicorn
+
