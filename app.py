@@ -1,16 +1,52 @@
 from flask import Flask, jsonify, request, render_template_string
-from insights_agent import analyze_spending_patterns
+from insights_agent import analyze_spending_patterns, analyze_html_file
 import json
 import os
 import uuid
 import hashlib
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+import threading
+import tempfile
+
+# MongoDB is optional - only import if available
+try:
+    from pymongo import MongoClient
+    from pymongo.errors import ConnectionFailure
+    MONGO_AVAILABLE = True
+except ImportError:
+    MONGO_AVAILABLE = False
+    print("[WARNING] pymongo not installed, using in-memory job storage")
 
 load_dotenv()
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
+
+# ============================
+# MONGODB CONNECTION SETUP
+# ============================
+
+def get_mongo_connection():
+    """Get MongoDB connection"""
+    if not MONGO_AVAILABLE:
+        return None
+    
+    try:
+        mongo_uri = os.getenv('MONGODB_URI')
+        if not mongo_uri:
+            print("[WARNING] MONGODB_URI not set, using in-memory job storage")
+            return None
+        
+        client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+        client.admin.command('ping')
+        return client['cardano_insights']
+    except Exception as e:
+        print(f"[WARNING] MongoDB connection failed: {str(e)}, using in-memory job storage")
+        return None
+
+db = get_mongo_connection()
+jobs_collection = db['jobs'] if db is not None else None
 
 # HTML Template for displaying insights
 INSIGHTS_TEMPLATE = """
@@ -603,28 +639,131 @@ def health_check():
 # MIP-003 AGENTIC SERVICE API
 # ============================
 
-# Job storage (use database in production)
+# Job storage (in-memory fallback if MongoDB unavailable)
 jobs_store = {}
+
+def save_job(job_id, job_data):
+    """Save job to MongoDB or in-memory store"""
+    if jobs_collection:
+        try:
+            jobs_collection.update_one(
+                {"job_id": job_id},
+                {"$set": job_data},
+                upsert=True
+            )
+        except Exception as e:
+            print(f"[ERROR] Failed to save job to MongoDB: {str(e)}")
+            jobs_store[job_id] = job_data
+    else:
+        jobs_store[job_id] = job_data
+
+def get_job(job_id):
+    """Retrieve job from MongoDB or in-memory store"""
+    if jobs_collection:
+        try:
+            job = jobs_collection.find_one({"job_id": job_id}, {"_id": 0})
+            return job
+        except Exception as e:
+            print(f"[ERROR] Failed to retrieve job from MongoDB: {str(e)}")
+            return jobs_store.get(job_id)
+    return jobs_store.get(job_id)
+
+def process_job_async(job_id, html_content):
+    """Process job asynchronously in background thread"""
+    def _process():
+        try:
+            print(f"[PROCESSING] Starting analysis for job: {job_id}")
+            
+            # Save HTML to temp file
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
+                f.write(html_content)
+                temp_html_path = f.name
+            
+            try:
+                # Analyze HTML file
+                analysis_result = analyze_html_file(temp_html_path)
+                
+                if analysis_result is None:
+                    raise ValueError("Failed to analyze HTML file")
+                
+                # Convert CrewOutput to string
+                result_str = str(analysis_result).strip()
+                
+                # Extract JSON from the result
+                json_start = result_str.find('{')
+                json_end = result_str.rfind('}') + 1
+                
+                if json_start >= 0 and json_end > json_start:
+                    json_str = result_str[json_start:json_end]
+                    analysis_data = json.loads(json_str)
+                else:
+                    raise ValueError("No JSON found in response")
+                
+                # Update job with results
+                job = get_job(job_id)
+                job['status'] = 'completed'
+                job['result'] = {
+                    'keyInsights': analysis_data.get('keyInsights', []),
+                    'alerts': analysis_data.get('alerts', []),
+                    'suggestions': analysis_data.get('suggestions', [])
+                }
+                job['completed_at'] = datetime.utcnow().isoformat()
+                
+                save_job(job_id, job)
+                print(f"[SUCCESS] Job completed: {job_id}")
+                
+            finally:
+                # Clean up temp file
+                if os.path.exists(temp_html_path):
+                    os.remove(temp_html_path)
+        
+        except Exception as e:
+            print(f"[ERROR] Job processing failed: {job_id} - {str(e)}")
+            job = get_job(job_id)
+            job['status'] = 'failed'
+            job['error'] = str(e)
+            job['completed_at'] = datetime.utcnow().isoformat()
+            save_job(job_id, job)
+    
+    # Start processing in background thread
+    thread = threading.Thread(target=_process, daemon=True)
+    thread.start()
 
 @app.route('/start_job', methods=['POST'])
 def start_job():
     """
     MIP-003 Compliant: Initiates a financial analysis job
+    Accepts multipart/form-data with HTML file upload
     """
     try:
-        data = request.get_json()
-        
-        # Validate required fields
-        if not data.get('identifier_from_purchaser'):
+        # Get identifier from form data
+        identifier_from_purchaser = request.form.get('identifier_from_purchaser')
+        if not identifier_from_purchaser:
             return jsonify({
                 "status": "error",
                 "message": "identifier_from_purchaser is required"
             }), 400
         
-        if not data.get('input_data'):
+        # Get HTML file from upload
+        if 'html_file' not in request.files:
             return jsonify({
                 "status": "error",
-                "message": "input_data is required"
+                "message": "html_file is required"
+            }), 400
+        
+        file = request.files['html_file']
+        if file.filename == '':
+            return jsonify({
+                "status": "error",
+                "message": "No file selected"
+            }), 400
+        
+        # Read HTML content
+        html_content = file.read().decode('utf-8')
+        if not html_content:
+            return jsonify({
+                "status": "error",
+                "message": "HTML file is empty"
             }), 400
         
         # Generate IDs
@@ -632,10 +771,8 @@ def start_job():
         status_id = str(uuid.uuid4())
         blockchain_id = f"block_{uuid.uuid4().hex[:8]}"
         
-        # Create input hash
-        input_hash = hashlib.md5(
-            json.dumps(data['input_data'], sort_keys=True).encode()
-        ).hexdigest()
+        # Create input hash from file content
+        input_hash = hashlib.md5(html_content.encode()).hexdigest()
         
         # Set timestamps (Unix timestamps)
         now = datetime.utcnow()
@@ -644,17 +781,31 @@ def start_job():
         unlock_time = int((now + timedelta(hours=3)).timestamp())
         dispute_unlock_time = int((now + timedelta(hours=4)).timestamp())
         
-        # Store job
-        jobs_store[job_id] = {
-            "status": "running",
+        # Create job record
+        job_data = {
+            "job_id": job_id,
+            "status": "processing",
             "status_id": status_id,
-            "input_data": data['input_data'],
-            "identifier_from_purchaser": data['identifier_from_purchaser'],
+            "input_data": {
+                "html_file": file.filename,
+                "file_size": len(html_content)
+            },
+            "identifier_from_purchaser": identifier_from_purchaser,
             "created_at": now.isoformat(),
-            "blockchain_id": blockchain_id
+            "blockchain_id": blockchain_id,
+            "blockchain_identifier": blockchain_id,
+            "pay_by_time": pay_by_time,
+            "submit_result_time": submit_result_time,
+            "input_hash": input_hash
         }
         
-        print(f"[MIP-003] Job started: {job_id}")
+        # Save job
+        save_job(job_id, job_data)
+        
+        # Start async processing
+        process_job_async(job_id, html_content)
+        
+        print(f"[MIP-003] Job started: {job_id} with file: {file.filename}")
         
         return jsonify({
             "id": status_id,
@@ -667,12 +818,14 @@ def start_job():
             "externalDisputeUnlockTime": dispute_unlock_time,
             "agentIdentifier": "financial-insights-v1",
             "sellerVKey": "addr1qxlkjl23k4jlksdjfl234jlksdf",
-            "identifierFromPurchaser": data['identifier_from_purchaser'],
+            "identifierFromPurchaser": identifier_from_purchaser,
             "input_hash": input_hash
         }), 200
     
     except Exception as e:
         print(f"[ERROR] /start_job: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({
             "status": "error",
             "message": str(e)
@@ -694,13 +847,13 @@ def get_job_status():
                 "message": "job_id query parameter is required"
             }), 400
         
-        if job_id not in jobs_store:
+        job = get_job(job_id)
+        
+        if not job:
             return jsonify({
                 "status": "error",
                 "message": "Job not found"
             }), 404
-        
-        job = jobs_store[job_id]
         
         response = {
             "id": job.get('status_id'),
@@ -712,9 +865,13 @@ def get_job_status():
         if job.get('result'):
             response['result'] = job.get('result')
         
-        # Include input schema if awaiting input
-        if job.get('status') == 'awaiting_input' and job.get('input_schema'):
-            response['input_schema'] = job.get('input_schema')
+        # Include error if job failed
+        if job.get('error'):
+            response['error'] = job.get('error')
+        
+        # Include completion timestamp
+        if job.get('completed_at'):
+            response['completed_at'] = job.get('completed_at')
         
         return jsonify(response), 200
     
@@ -745,20 +902,26 @@ def provide_input_mip003():
                 "message": "job_id and status_id are required"
             }), 400
         
-        if job_id not in jobs_store:
+        job = get_job(job_id)
+        if not job:
             return jsonify({
                 "status": "error",
                 "message": "Job not found"
             }), 404
         
+        # Extract HTML content if provided
+        html_content = None
+        if input_data and 'html_file' in input_data:
+            html_content = input_data.get('html_file')
+        
         # Merge input data
         if input_data:
-            jobs_store[job_id]['input_data'].update(input_data)
+            job['input_data'].update(input_data)
         
         if input_groups:
-            if 'input_groups' not in jobs_store[job_id]:
-                jobs_store[job_id]['input_groups'] = []
-            jobs_store[job_id]['input_groups'].extend(input_groups)
+            if 'input_groups' not in job:
+                job['input_groups'] = []
+            job['input_groups'].extend(input_groups)
         
         # Create input hash
         merge_data = input_data or {}
@@ -777,8 +940,12 @@ def provide_input_mip003():
         })
         signature = hashlib.sha256(signature_data.encode()).hexdigest() * 2
         
-        # Update job status
-        jobs_store[job_id]['status'] = 'running'
+        # Save job
+        save_job(job_id, job)
+        
+        # If HTML provided, start processing
+        if html_content:
+            process_job_async(job_id, html_content)
         
         print(f"[MIP-003] Input provided for job: {job_id}")
         

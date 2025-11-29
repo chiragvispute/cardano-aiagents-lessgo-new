@@ -1,7 +1,7 @@
 crewai[google-genai]
 google-generativeai
 google-api-python-client
-pymongo
+pymongo>=4.0
 pandas
 python-dotenv
 flask
