@@ -21,6 +21,7 @@ except ImportError:
 load_dotenv()
 
 app = Flask(__name__)
+app.url_map.strict_slashes = False 
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
 
 # ============================
