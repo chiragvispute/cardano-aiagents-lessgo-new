@@ -23,6 +23,7 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+
 # Virtual environments
 venv/
 ENV/
@@ -38,6 +39,7 @@ env/
 .DS_Store
 
 # Environment variables
+.env
 .env
 .env.local
 .env.*.local
