@@ -20,9 +20,22 @@ app = Flask(__name__)
 # FULL CORS FIX for Sokosumi
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
-# Masumi agent ID from your .env
+# Load all environment variables
+MONGODB_URI = os.getenv("MONGODB_URI")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+PAYMENT_SERVICE_URL = os.getenv("PAYMENT_SERVICE_URL")
+PAYMENT_API_KEY = os.getenv("PAYMENT_API_KEY")
+PAYMENT_AMOUNT = os.getenv("PAYMENT_AMOUNT", "10000000")
+PAYMENT_UNIT = os.getenv("PAYMENT_UNIT", "lovelace")
+SELLER_VKEY = os.getenv("SELLER_VKEY")
 AGENT_IDENTIFIER = os.getenv("AGENT_IDENTIFIER", "financial-insights-v1")
-SELLER_VKEY = os.getenv("SELLER_VKEY", "addr1qxlkjl23k4jlksdjfl234jlksdf")
+NODE_ENV = os.getenv("NODE_ENV", "production")
+
+# Validate critical env variables
+if not GEMINI_API_KEY:
+    print("[WARNING] GEMINI_API_KEY not set in .env")
+if not SELLER_VKEY:
+    print("[WARNING] SELLER_VKEY not set in .env")
 
 app.url_map.strict_slashes = False
 
@@ -206,7 +219,10 @@ def start_job():
             "agentIdentifier": AGENT_IDENTIFIER,
             "sellerVKey": SELLER_VKEY,
             "identifierFromPurchaser": identifier,
-            "input_hash": input_hash
+            "input_hash": input_hash,
+            "paymentAmount": PAYMENT_AMOUNT,
+            "paymentUnit": PAYMENT_UNIT,
+            "paymentServiceUrl": PAYMENT_SERVICE_URL
         }), 200
 
     except Exception as e:
