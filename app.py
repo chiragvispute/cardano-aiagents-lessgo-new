@@ -34,7 +34,7 @@ PAYMENT_API_KEY = os.getenv("PAYMENT_API_KEY")
 PAYMENT_AMOUNT = os.getenv("PAYMENT_AMOUNT", "10000000")
 PAYMENT_UNIT = os.getenv("PAYMENT_UNIT", "lovelace")
 SELLER_VKEY = os.getenv("SELLER_VKEY")
-AGENT_IDENTIFIER = os.getenv("AGENT_IDENTIFIER", "financial-insights-v1")
+AGENT_IDENTIFIER = os.getenv("AGENT_IDENTIFIER")
 NODE_ENV = os.getenv("NODE_ENV", "production")
 
 # Validate critical env variables
