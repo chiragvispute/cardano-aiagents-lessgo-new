@@ -139,7 +139,7 @@ def input_schema():
                 "name": "Google Pay Activity File (.html)",
                 "data": {
                     "accept": ".html",
-                    "maxSize": 5000000,
+                    "maxSize": 500000000,
                     "outputFormat": "base64"
                 },
                 "validations": [
