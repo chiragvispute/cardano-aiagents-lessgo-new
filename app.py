@@ -16,6 +16,12 @@ from insights_agent import analyze_html_file
 dotenv.load_dotenv()
 
 app = Flask(__name__)
+@app.after_request
+def allow_all(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    return response
 
 # FULL CORS FIX for Sokosumi
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
@@ -72,7 +78,6 @@ def process_job_async(job_id, html_content):
                 
                 # Convert CrewOutput to string
                 result_str = str(analysis_result).strip()
-                
                 # Extract JSON from the result
                 json_start = result_str.find('{')
                 json_end = result_str.rfind('}') + 1
@@ -129,17 +134,6 @@ def input_schema():
     return {
         "input_data": [
             {
-                "id": "identifier_from_purchaser",
-                "type": "string",
-                "name": "Job Identifier",
-                "data": {
-                    "placeholder": "Enter any ID (example: job123, gpay-01)"
-                },
-                "validations": [
-                    {"type": "required"}
-                ]
-            },
-            {
                 "id": "html_file",
                 "type": "file",
                 "name": "Google Pay Activity File (.html)",
@@ -154,6 +148,7 @@ def input_schema():
             }
         ]
     }, 200
+
 
 
 
