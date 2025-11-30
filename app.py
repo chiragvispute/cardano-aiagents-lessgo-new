@@ -131,7 +131,7 @@ def availability():
 
 @app.get("/input_schema")
 def input_schema():
-    return {
+    return jsonify({
         "input_data": [
             {
                 "id": "html_file",
@@ -147,7 +147,8 @@ def input_schema():
                 ]
             }
         ]
-    }, 200
+    })
+
 
 
 
