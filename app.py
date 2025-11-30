@@ -126,9 +126,19 @@ def availability():
 
 @app.get("/input_schema")
 def input_schema():
-    """Return expected input schema"""
-    return jsonify({
+    return {
         "input_data": [
+            {
+                "id": "identifier_from_purchaser",
+                "type": "string",
+                "name": "Job Identifier",
+                "data": {
+                    "placeholder": "Enter any ID (example: job123, gpay-01)"
+                },
+                "validations": [
+                    {"type": "required"}
+                ]
+            },
             {
                 "id": "html_file",
                 "type": "file",
@@ -143,7 +153,8 @@ def input_schema():
                 ]
             }
         ]
-    }), 200
+    }, 200
+
 
 
 @app.post("/start_job")
